@@ -57,9 +57,117 @@ main(int argc, char *argv[])
   exit(0);
 }
 
+
 void
 memdump(char *fmt, char *data, int len)
 {
-  // Your code here.  `data` holds `len` valid bytes.
+  int index = 0;
+  int offset = 0;
 
+  while (fmt[index] != '\0')
+  {
+    char character = fmt[index];
+
+    switch (character)
+    {
+    case 'i':
+    {
+      // Kiem tra du 4 byte
+      if (offset > len || len - offset < 4)
+      {
+        printf("memdump: not enough data for '%c'\n", character);
+        return;
+      }
+
+      int value;
+      memmove(&value, data + offset, sizeof(int));
+
+      printf("%d\n", value);
+      offset += 4;
+      break;
+    }
+
+    case 'h':
+    {
+      // Kiem tra du 2 byte
+      if (offset > len || len - offset < 2)
+      {
+        printf("memdump: not enough data for '%c'\n", character);
+        return;
+      }
+
+      short value;
+      memmove(&value, data + offset, sizeof(short));
+
+      printf("%d\n", value);
+      offset += 2;
+      break;
+    }
+
+    case 'c':
+    {
+      // Kiem tra du 1 byte
+      if (offset > len || len - offset < 1)
+      {
+        printf("memdump: not enough data for '%c'\n", character);
+        return;
+      }
+
+      char val;
+      memmove(&val, data + offset, sizeof(char));
+
+      printf("%c\n", val);
+      offset += 1;
+      break;
+    }
+
+    case 'p':
+    {
+      if (offset > len || len - offset < 8)
+      {
+        printf("memdump: not enough data for '%c'\n", character);
+        return;
+      }
+
+      uint64 value;
+      memmove(&value, data + offset, sizeof(uint64));
+
+      printf("%lx\n", value);
+      offset += 8;
+      break;
+    }
+
+    case 's':
+    {
+      if (offset > len || len - offset < 8)
+      {
+        printf("memdump: not enough data for '%c'\n", character);
+        return;
+      }
+
+      uint64 address;
+      memmove(&address, data + offset, sizeof(address));
+      printf("%s\n", (char *)address);
+      offset += 8;
+      break;
+    }
+
+    case 'S':
+    {
+      while (offset < len && data[offset] != '\0')
+      {
+        printf("%c", data[offset]);
+        offset++;
+      }
+      printf("\n");
+      break;
+    }
+
+    default:
+      printf("memdump: unknown format '%c'\n", character);
+      return;
+    }
+
+    index++;
+  }
 }
