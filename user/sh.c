@@ -3,6 +3,8 @@
 #include "kernel/types.h"
 #include "user/user.h"
 #include "kernel/fcntl.h"
+#include "kernel/stat.h"
+#include "kernel/fs.h"
 
 // Parsed command representation
 #define EXEC  1
@@ -12,6 +14,96 @@
 #define BACK  5
 
 #define MAXARGS 10
+
+
+//LỊCH SỬ LỆNH (3c)
+#define MAX_HISTORY 10
+char history[MAX_HISTORY][100];
+int  history_count = 0;
+
+void
+save_history(char *cmd)
+{
+  char temp[100];
+  strcpy(temp, cmd);
+  int len = strlen(temp);
+  if(len > 0 && temp[len-1] == '\n')
+    temp[len-1] = '\0';
+  if(strlen(temp) == 0)
+    return;
+
+  if(history_count < MAX_HISTORY){
+    strcpy(history[history_count], temp);
+    history_count++;
+  } else {
+    for(int i = 0; i < MAX_HISTORY-1; i++)
+      strcpy(history[i], history[i+1]);
+    strcpy(history[MAX_HISTORY-1], temp);
+  }
+}
+
+void
+print_history(void)
+{
+  for(int i = 0; i < history_count; i++)
+    fprintf(1, "%d %s\n", i+1, history[i]);
+}
+
+//TAB COMPLETION (3b)
+void
+handle_tab(char *buf, int *buf_len)
+{
+  int len = *buf_len;
+
+  int space_idx = -1;
+  for(int j = len-1; j >= 0; j--){
+    if(buf[j] == ' '){ space_idx = j; break; }
+  }
+  char *dir    = (space_idx == -1) ? "/" : ".";
+  char *prefix = buf + space_idx + 1;
+  int prefix_len = len - (space_idx + 1);
+
+  int fd = open(dir, O_RDONLY);
+  if(fd < 0) return;
+
+  struct dirent de;
+  char matches[20][DIRSIZ+1];
+  int match_count = 0;
+
+  while(read(fd, &de, sizeof(de)) == sizeof(de)){
+    if(de.inum == 0) continue;
+
+    char name[DIRSIZ+1];
+    memmove(name, de.name, DIRSIZ);
+    name[DIRSIZ] = '\0';
+    if(strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
+
+    int is_match = 1;
+    for(int k = 0; k < prefix_len; k++){
+      if(name[k] != prefix[k]){ is_match = 0; break; }
+    }
+    if(is_match && match_count < 20){
+      strcpy(matches[match_count], name);
+      match_count++;
+    }
+  }
+  close(fd);
+
+  if(match_count == 1){
+    for(int j = prefix_len; matches[0][j] != '\0'; j++){
+      buf[*buf_len] = matches[0][j];
+      (*buf_len)++;
+      fprintf(2, "%c", matches[0][j]);
+    }
+    buf[*buf_len] = '\0';
+  } else if(match_count > 1){
+    buf[*buf_len] = '\0';
+    fprintf(2, "\n");
+    for(int j = 0; j < match_count; j++)
+      fprintf(2, "%s ", matches[j]);
+    fprintf(2, "\n$ %s", buf);
+  }
+}
 
 struct cmd {
   int type;
@@ -134,11 +226,73 @@ runcmd(struct cmd *cmd)
 int
 getcmd(char *buf, int nbuf)
 {
-  write(2, "$ ", 2);
+  struct stat st;
+  int is_console = (fstat(0, &st) == 0 && st.type == T_DEVICE);
   memset(buf, 0, nbuf);
-  gets(buf, nbuf);
-  if (buf[0] == 0) // EOF
-    return -1;
+
+  // 3a: input từ file -> không prompt, đọc cooked
+  if(!is_console){
+    gets(buf, nbuf);
+    if(buf[0] == 0) return -1;
+    return 0;
+  }
+
+  // console -> prompt + đọc raw từng ký tự
+  fprintf(2, "$ ");
+  int i = 0;
+  int current_history = history_count;
+  char c;
+
+  rawmode(1);
+  while(read(0, &c, 1) > 0){
+    if(c == '\n' || c == '\r'){                 // Enter
+      fprintf(2, "\n");
+      buf[i++] = '\n';
+      break;
+    }
+    else if(c == '\b' || c == '\x7f'){          // Backspace / Delete
+      if(i > 0){ i--; fprintf(2, "\b \b"); }
+    }
+    else if(c == '\t'){                         // Tab (3b)
+      handle_tab(buf, &i);
+    }
+    else if(c == '\x1b'){                        // ESC -> mũi tên (3c)
+      char seq[2];
+      read(0, &seq[0], 1);
+      read(0, &seq[1], 1);
+      if(seq[0] == '['){
+        if(seq[1] == 'A'){                       // LÊN
+          if(current_history > 0){
+            current_history--;
+            for(int j = 0; j < i; j++) fprintf(2, "\b \b");
+            strcpy(buf, history[current_history]);
+            i = strlen(buf);
+            fprintf(2, "%s", buf);
+          }
+        } else if(seq[1] == 'B'){                // XUỐNG
+          for(int j = 0; j < i; j++) fprintf(2, "\b \b");
+          if(current_history < history_count-1){
+            current_history++;
+            strcpy(buf, history[current_history]);
+            i = strlen(buf);
+            fprintf(2, "%s", buf);
+          } else {
+            current_history = history_count;
+            buf[0] = '\0';
+            i = 0;
+          }
+        }
+      }
+    }
+    else if(i < nbuf-2){                         // ký tự thường
+      buf[i++] = c;
+      fprintf(2, "%c", c);
+    }
+  }
+  buf[i] = '\0';
+  rawmode(0);
+
+  if(i == 0) return -1;     // EOF (Ctrl-D)
   return 0;
 }
 
@@ -163,6 +317,38 @@ main(void)
       cmd++;
     if (*cmd == '\n') // is a blank command
       continue;
+
+    // ===== 3c: gọi lại lệnh cũ (!! / !n) =====
+    if (cmd[0] == '!') {
+      int num = -1;
+      if (cmd[1] == '!' && cmd[2] == '\n')
+        num = history_count;            // lệnh cuối
+      else
+        num = atoi(&cmd[1]);            // !n
+
+      if (num >= 1 && num <= history_count) {
+        strcpy(buf, history[num-1]);
+        int l = strlen(buf);
+        buf[l] = '\n'; buf[l+1] = '\0';
+        fprintf(2, "%s", buf);          // in lệnh ra trước khi chạy
+        cmd = buf;
+      } else {
+        fprintf(2, "no such command\n");
+        continue;
+      }
+    }
+
+    // Lưu lịch sử (bỏ qua "history" và lệnh bắt đầu bằng "!")
+    if (strcmp(cmd, "history\n") != 0 && cmd[0] != '!')
+      save_history(cmd);
+
+    // ===== 3c: builtin history =====
+    if (strcmp(cmd, "history\n") == 0) {
+      print_history();
+      continue;
+    }
+    // =========================================
+
     if (cmd[0] == 'c' && cmd[1] == 'd' && cmd[2] == ' ') {
       // Chdir must be called by the parent, not the child.
       cmd[strlen(cmd) - 1] = 0; // chop \n

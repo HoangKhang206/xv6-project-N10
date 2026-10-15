@@ -53,6 +53,7 @@ struct {
   uint r; // Read index
   uint w; // Write index
   uint e; // Edit index
+  int raw; // raw mode
 } cons;
 
 //
@@ -137,6 +138,14 @@ consoleread(int user_dst, uint64 dst, int n)
   return target - n;
 }
 
+void
+consraw(int on)
+{
+  acquire(&cons.lock);
+  cons.raw = on;
+  release(&cons.lock);
+}
+
 //
 // the console input interrupt handler.
 // uartintr() calls this for each input character.
@@ -147,6 +156,17 @@ void
 consoleintr(int c)
 {
   acquire(&cons.lock);
+
+  if(cons.raw){
+    if(c != 0 && cons.e - cons.r < INPUT_BUF_SIZE){
+      c = (c == '\r') ? '\n' : c;
+      cons.buf[cons.e++ % INPUT_BUF_SIZE] = c;
+      cons.w = cons.e;
+      wakeup(&cons.r);
+    }
+    release(&cons.lock);
+    return;
+  }
 
   switch (c) {
   case C('P'): // Print process list.
