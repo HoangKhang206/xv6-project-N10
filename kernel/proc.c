@@ -124,7 +124,8 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
-
+  p->mask = 0;
+  
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
     freeproc(p);
@@ -168,6 +169,8 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+
+  p->mask = 0;
 }
 
 // Create a user page table for a given process, with no user memory,
@@ -280,6 +283,8 @@ kfork(void)
 
   // Cause fork to return 0 in the child.
   np->trapframe->a0 = 0;
+
+  np->mask = p->mask;
 
   // increment reference counts on open file descriptors.
   for (i = 0; i < NOFILE; i++)
