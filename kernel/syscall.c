@@ -148,7 +148,18 @@ syscall(void)
 
     //check if this this syscall is in sandbox mask
     if ((p->mask & (1 << num)) != 0) {
-      p->trapframe->a0 = -1;
+
+      char path[MAXPATH];
+      // If the mask num is open and exec, check the pathname
+      if((num == SYS_open || num == SYS_exec) && p->path[0] != 0 &&
+          argstr(0, path, MAXPATH) >= 0 && strncmp(path,p->path, MAXPATH) == 0) {
+        // if pathname is correct, allow to run
+        p->trapframe->a0 = syscalls[num]();
+      }
+      else {
+        // else block the syscall
+        p->trapframe->a0 = -1;
+      }
     }
     else {
       p->trapframe->a0 = syscalls[num]();
