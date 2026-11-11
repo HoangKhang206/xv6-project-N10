@@ -279,6 +279,70 @@ freewalk(pagetable_t pagetable)
   kfree((void *)pagetable);
 }
 
+
+void
+vmprint_recursive(pagetable_t pagetable, int level, uint64 va_base)
+{
+    for (int i = 0; i < 512; i++) {
+        pte_t pte = pagetable[i];
+
+        // Bo qua PTE khong hop le
+        if ((pte && PTE_V) == 0)
+        {
+          continue;
+        }
+
+        uint64 va = va_base + ((uint64)i << PXSHIFT(level));
+        uint64 pa = PTE2PA(pte);
+
+        // In ra .. 
+        for (int j = 0; j < 3 - level; j++)
+        {
+          printk("..");
+        }
+
+        printk("%p: pte %p pa %p", va, pte, pa);
+
+        if (pte & (PTE_R | PTE_W | PTE_X | PTE_U))
+        {
+          printk(" ");
+          if (pte && PTE_R)
+          {
+            printk("R");
+          }
+          if (pte && PTE_W)
+          {
+            printk("W");
+          }
+          if (pte && PTE_X)
+          {
+            printk("X");
+          }
+          if (pte && PTE_U)
+          {
+            printk("U");
+          }
+          
+        }
+        printk("\n");
+
+        // Di xuong neu PTE tro toi bang trang con
+        if (level > 0 && (pte & (PTE_R | PTE_W | PTE_X)) == 0)
+        { 
+          vmprint_recursive((pagetable_t)pa, level - 1, va);
+        }
+        
+    }
+}
+
+void
+vmprint(pagetable_t pagetable)
+{
+  printk("page table %p\n", (uint64)pagetable);
+  vmprint_recursive(pagetable, 2, 0);
+}
+
+
 // Free user memory pages,
 // then free page-table pages.
 void
